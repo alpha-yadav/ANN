@@ -10,10 +10,10 @@ class TwoNN:
         self.by = None
 
     def forward(self, x):
-        self.ax = self.activation(self.zx)   
-        self.zx = self.wx @ x + self.bx      
-        self.zy = self.wy @ self.ax + self.by 
-        self.ay = self.activation(self.zy)    
+        self.zx = self.wx @ x + self.bx
+        self.ax = self.activation(self.zx)
+        self.zy = self.wy @ self.ax + self.by
+        self.ay = self.activation(self.zy)
         return self.ay[0]                     
 
     def _dact(self, z):
@@ -60,8 +60,3 @@ class TwoNN:
 
     def predict(self, x):
         return np.array([self.forward(xi) for xi in x])
-if __name__ == "__main__":
-    test = TwoNN(activation=lambda z: z**2, dact=lambda z: 2*z)  # step function for XOR
-    x = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
-    test.fit(x, np.array([0, 1, 1, 0]), lr=0.01, epochs=10000)
-    print(test.predict(x))
