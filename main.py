@@ -1,14 +1,3 @@
-"""
-NLayerNN — A feedforward neural network of arbitrary depth, built from
-scratch with NumPy only (no autograd, no frameworks).
-
-Generalizes a fixed two-layer network into N layers, with:
-  - per-layer activation functions (e.g. relu on hidden layers, sigmoid
-    on the output layer)
-  - full-batch vectorized forward/backward passes (not per-sample loops)
-  - standard He/Xavier-style weight init
-"""
-
 import numpy as np
 
 
