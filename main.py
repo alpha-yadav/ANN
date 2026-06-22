@@ -1,10 +1,11 @@
 import numpy as np
 "HERE THIS ONE LAYER ANN"
 class simpleNN:
-    def __init__(self,epochs=1000,rate=0.01,activation=lambda x: x):
+    def __init__(self,epochs=1000,rate=0.01,activation=lambda x: x,dact=None):
         self.epochs = epochs
         self.rate = rate
         self.activation = activation
+        self.dact=dact
         self.bias = None
         self.weights = None
     def backward(self, X, output):

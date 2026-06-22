@@ -28,7 +28,7 @@ zy = wy @ ax + by        # output pre-activation
 ay = activation(zy)      # output activation
 ```
 
-**Backward pass** (`fit`)
+**Backward pass** (`backward`)
 
 Per-sample SGD with squared error loss `(y_pred - y)^2`:
 
@@ -39,25 +39,6 @@ Per-sample SGD with squared error loss `(y_pred - y)^2`:
 
 Weights are initialized as small random values (`* 0.1`), not identity —
 identity init would make the hidden layer redundant at the start of training.
-
-## Bug fixed
-
-The original `forward()` computed `ax` from `zx` *before* `zx` was assigned:
-
-```python
-self.ax = self.activation(self.zx)   # zx doesn't exist yet
-self.zx = self.wx @ x + self.bx
-```
-
-This raised `AttributeError: 'TwoNN' object has no attribute 'zx'` on the very
-first call. Fixed by reordering so `zx` is computed first:
-
-```python
-self.zx = self.wx @ x + self.bx
-self.ax = self.activation(self.zx)
-self.zy = self.wy @ self.ax + self.by
-self.ay = self.activation(self.zy)
-```
 
 ## Usage
 
@@ -95,29 +76,17 @@ Epoch 9900 | Loss: 0.000000
 
 ## API
 
-### `TwoNN(activation=lambda x: x, dact=None)`
+### `TwoNN(activation=lambda x: x, dact=None)`/ `SimpleNN(activation=lambda x: x, dact=None)`
 - `activation` — function applied after each linear layer.
 - `dact` — derivative of `activation`. If omitted, estimated numerically
   via `(activation(z + 1e-4) - activation(z)) / 1e-4`. Supplying the exact
   derivative is faster and more numerically stable.
 
-### `.fit(x, y, lr=0.001, epochs=1000)`
+### `.backward(x, y, lr=0.001, epochs=1000)`
 Trains with plain (non-batched) SGD — one sample at a time, weights updated
 every sample. Hidden layer size is fixed to `n_features` (no separate
 hyperparameter for hidden width). Prints loss every 100 epochs.
 
-### `.predict(x)`
+### `.forward(x)`
 Runs the forward pass on each row of `x`, returns predictions as an array.
 
-## Notes & limitations
-
-- **Hidden size is tied to input size.** `n_hidden = n_features`, so the
-  hidden layer can't be made wider/narrower independently.
-- **No bias-free option, no batching, no validation split** — this is a
-  from-scratch teaching/demo implementation, not a production model.
-- **Same activation for both layers.** Using `z**2` for the output layer
-  means predictions are always non-negative — fine for this 0/1 XOR target,
-  but worth knowing if you swap in a different `y`.
-- **Learning rate is sensitive** to the activation choice. The comment in
-  the original code (`lower lr for z**2`) is a reminder that `z**2`'s
-  growing derivative can blow up updates at higher `lr`.
