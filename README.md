@@ -1,92 +1,147 @@
-# TwoNN — A Two-Layer Neural Network from Scratch (NumPy)
+# NLayerNN — Feedforward Neural Network from Scratch (NumPy)
 
-A minimal feedforward neural network with one hidden layer, implemented using
-only `numpy`. No frameworks, no autograd — forward pass, backward pass, and
-gradient descent are all written out by hand. The included example trains it
-to solve XOR.
+A feedforward neural network of **arbitrary depth**, built using only
+`numpy` — no autograd, no frameworks. Forward pass, backpropagation, and
+gradient descent are all written out by hand. Includes `OneLayerNN` and
+`TwoLayerNN` as convenience subclasses for the common shallow cases.
 
-## How it works
-
-**Architecture**
+## Architecture
 
 ```
-input x  →  hidden layer (wx, bx)  →  activation  →  output layer (wy, by)  →  activation  →  ay
+X  →  [W₁, b₁] → act₁  →  [W₂, b₂] → act₂  →  ...  →  [Wₙ, bₙ] → actₙ  →  output
 ```
 
-- `wx`, `bx` — weights/bias for the hidden layer (`n_hidden x n_features`)
-- `wy`, `by` — weights/bias for the output layer (`1 x n_hidden`)
-- `activation` — applied after both layers (same function for both, by design)
-- `dact` — derivative of the activation, used in backprop. If not supplied,
-  it's estimated numerically with a finite difference.
+- `layer_sizes` defines the shape, e.g. `[2, 4, 4, 1]` = 2 inputs → hidden(4)
+  → hidden(4) → 1 output. `len(layer_sizes) - 1` is the number of weight
+  matrices.
+- Each layer has its **own activation function** — e.g. `relu` on every
+  hidden layer, `sigmoid` on the output (the default), rather than one
+  global activation forced on every layer.
+- The whole batch is processed at once (`X` is `(n_samples, n_features)`)
+  — no per-sample Python loop.
 
-**Forward pass** (`forward`)
+**Forward pass** (vectorized over the batch):
 
 ```
-zx = wx @ x + bx        # hidden pre-activation
-ax = activation(zx)     # hidden activation
-zy = wy @ ax + by        # output pre-activation
-ay = activation(zy)      # output activation
+Z[l] = A[l-1] @ W[l].T + b[l]
+A[l] = activation[l](Z[l])
 ```
 
-**Backward pass** (`backward`)
+**Backward pass** (mean-squared-error loss, full-batch gradient descent):
 
-Per-sample SGD with squared error loss `(y_pred - y)^2`:
+```
+delta = (2/n) * (y_pred - y)                      # at the output layer
+for l from last layer to first:
+    delta   = delta * dactivation[l](Z[l])
+    dW[l]   = delta.T @ A[l-1]
+    db[l]   = sum(delta, axis=0)
+    delta   = delta @ W[l]                         # propagate to layer l-1
+    W[l]   -= lr * dW[l]
+    b[l]   -= lr * db[l]
+```
 
-1. `delta_out = 2 * err * dact(zy)` — output layer gradient
-2. Update `wy`, `by` using `delta_out` and the hidden activation `ax`
-3. Backpropagate: `d_hidden = (wy^T @ delta_out) * dact(zx)`
-4. Update `wx`, `bx` using `d_hidden` and the raw input `x`
+Weights are initialized with He scaling (`sqrt(2/n_in)`) for relu layers
+and Xavier-style scaling (`sqrt(1/n_in)`) otherwise, which keeps
+activations well-behaved as depth increases.
 
-Weights are initialized as small random values (`* 0.1`), not identity —
-identity init would make the hidden layer redundant at the start of training.
+## Classes
 
-## Usage
+### `NLayerNN(layer_sizes, activations=None, seed=None)`
+The general N-layer network. `activations` is a list of strings, one per
+layer, chosen from `"relu"`, `"sigmoid"`, `"tanh"`, `"linear"`. If omitted,
+defaults to relu on all hidden layers and sigmoid on the output.
 
 ```python
-import numpy as np
-from main import TwoNN
-
-# z**2 activation with analytical derivative 2z — works for XOR here
-# because it's nonlinear; note it's an unusual choice (not bounded,
-# not monotonic) — sigmoid/tanh/relu would be more typical picks.
-model = TwoNN(activation=lambda z: z**2, dact=lambda z: 2*z)
-
-x = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
-y = np.array([0, 1, 1, 0])
-
-model.fit(x, y, lr=0.01, epochs=10000)
-print(model.predict(x))
-# ≈ [0, 1, 1, 0]
+net = NLayerNN(layer_sizes=[2, 4, 4, 1], activations=["relu", "relu", "sigmoid"], seed=42)
+net.fit(X, y, lr=0.1, epochs=5000)
+net.predict(X)
 ```
 
-Run directly:
+### `OneLayerNN(n_features, n_output=1, activation="sigmoid", seed=None)`
+No hidden layer — input straight to output. Equivalent to logistic/linear
+regression depending on the activation. A thin subclass of `NLayerNN`
+with `layer_sizes=[n_features, n_output]`.
+
+```python
+net = OneLayerNN(n_features=2, activation="sigmoid", seed=42)
+net.fit(X, y, lr=0.5, epochs=5000)
+```
+
+**Note:** a one-layer network has no hidden units, so it can only learn a
+linear decision boundary. It **cannot** solve XOR — see "Demo output"
+below for what that failure actually looks like.
+
+### `TwoLayerNN(n_features, n_hidden, n_output=1, hidden_activation="relu", output_activation="sigmoid", seed=None)`
+The classic shallow MLP: input → hidden → output. A thin subclass of
+`NLayerNN` with `layer_sizes=[n_features, n_hidden, n_output]`.
+
+```python
+net = TwoLayerNN(n_features=2, n_hidden=6, seed=42)
+net.fit(X, y, lr=0.1, epochs=5000)
+```
+
+### Shared methods (all three classes)
+- **`.fit(X, y, lr=0.01, epochs=1000, verbose_every=100)`** — trains with
+  full-batch gradient descent. Prints loss every `verbose_every` epochs
+  (set to `0`/`None` to silence). Returns the per-epoch loss history.
+- **`.predict(X)`** — runs the forward pass, returns predictions shaped
+  `(n_samples, n_output)`.
+
+## Usage
 
 ```bash
 python main.py
 ```
 
-Expected output (abbreviated):
+Running the file directly trains all three (`OneLayerNN`, `TwoLayerNN`,
+`NLayerNN`) on the XOR problem and prints results for each.
+
+## Demo output (XOR)
 
 ```
-Epoch    0 | Loss: 0.2...
+==================================================
+OneLayerNN (input -> output, no hidden layer)
+==================================================
 ...
-Epoch 9900 | Loss: 0.000000
-[0.0012 0.9999 0.9999 0.0006]
+Predictions: [0.5 0.5 0.5 0.5]
+Rounded:     [0. 0. 0. 0.]
+(expected to NOT match [0 1 1 0] — XOR needs a hidden layer)
+
+==================================================
+TwoLayerNN (input -> hidden -> output)
+==================================================
+...
+Predictions: [0.066 0.964 0.973 0.027]
+Rounded:     [0. 1. 1. 0.]
+
+==================================================
+NLayerNN (input -> hidden -> hidden -> output)
+==================================================
+...
+Predictions: [0.013 0.961 0.961 0.013]
+Rounded:     [0. 1. 1. 0.]
 ```
 
-## API
+`OneLayerNN` plateauing at `0.5` for every input is the expected, correct
+behavior — not a bug. XOR isn't linearly separable, so a network with no
+hidden layer mathematically cannot represent its decision boundary,
+regardless of training time. It's kept in the demo specifically to
+illustrate that limitation.
 
-### `TwoNN(activation=lambda x: x, dact=None)`/ `SimpleNN(activation=lambda x: x, dact=None)`
-- `activation` — function applied after each linear layer.
-- `dact` — derivative of `activation`. If omitted, estimated numerically
-  via `(activation(z + 1e-4) - activation(z)) / 1e-4`. Supplying the exact
-  derivative is faster and more numerically stable.
+## Notes & limitations
 
-### `.backward(x, y, lr=0.001, epochs=1000)`
-Trains with plain (non-batched) SGD — one sample at a time, weights updated
-every sample. Hidden layer size is fixed to `n_features` (no separate
-hyperparameter for hidden width). Prints loss every 100 epochs.
-
-### `.forward(x)`
-Runs the forward pass on each row of `x`, returns predictions as an array.
-
+- **Full-batch gradient descent only** — no mini-batching, no momentum,
+  no Adam/RMSProp. Good for understanding the mechanics; for larger
+  datasets you'd want a library (PyTorch/TensorFlow) or at least
+  mini-batch SGD with a modern optimizer.
+- **Shallow nets can hit bad local minima.** With `relu`, a `TwoLayerNN`
+  with too few hidden units (e.g. 4, on XOR) can converge to a plateau
+  where two of the four XOR points collapse to the same prediction. Use
+  `verbose_every` to watch the loss curve, and widen the hidden layer or
+  try a different seed if training stalls above the expected loss.
+- **No regularization, dropout, or batch norm** — this is a from-scratch
+  teaching implementation, not a production model.
+- **MSE loss only**, regardless of whether the task is regression or
+  classification. For classification, MSE with a sigmoid output still
+  works, but cross-entropy is the more standard choice and converges
+  faster in practice.
