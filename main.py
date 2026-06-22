@@ -1,5 +1,25 @@
 import numpy as np
-
+"HERE THIS ONE LAYER ANN"
+class simpleNN:
+    def __init__(self,epochs=1000,rate=0.01,activation=lambda x: x):
+        self.epochs = epochs
+        self.rate = rate
+        self.activation = activation
+        self.bias = None
+        self.weights = None
+    def backward(self, X, output):
+        n_samples,n_features = X.shape
+        self.weights = np.zeros(n_features, dtype=np.float64)
+        self.bias = 0.0
+        print(X[1],output[1])
+        for epoch in range(self.epochs):
+            y=self.forward(X)
+            dw = (1 / n_samples) * np.dot(X.T, (output - y))
+            db = (1 / n_samples) * np.sum(output - y)
+            self.weights -= self.rate * dw
+            self.bias -= self.rate * db
+    def forward(self, X):
+        return self.activation(np.dot(X, self.weights) + self.bias)
 class TwoNN:
     def __init__(self, activation=lambda x: x, dact=None):
         self.activation = activation
