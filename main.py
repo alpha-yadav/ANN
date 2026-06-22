@@ -206,11 +206,15 @@ class OneLayerNN(NLayerNN):
         )
 
 
-# ───────────────────────── two-layer ANN ─────────────────────────
-class TwoLayerNN(NLayerNN):
+# ───────────────────────── two-layer ANN (NLayerNN subclass) ─────────────────────────
+class TwoLayerNNSubclass(NLayerNN):
     """
-    Two-layer network: input -> hidden -> output.
-    The classic shallow MLP (this is what the original TwoNN generalizes).
+    Two-layer network: input -> hidden -> output, implemented as a thin
+    wrapper around NLayerNN (no separate forward/backward — reuses the
+    general N-layer machinery with layer_sizes fixed to length 3).
+
+    See TwoLayerNN below for a fully standalone, non-inheriting
+    implementation with its own explicit forward/backward/fit.
 
     Parameters
     ----------
@@ -238,6 +242,129 @@ class TwoLayerNN(NLayerNN):
         )
 
 
+# ───────────────────────── two-layer ANN (standalone) ─────────────────────────
+class TwoLayerNN:
+    """
+    Two-layer network: input -> hidden -> output. FULLY STANDALONE — does
+    NOT inherit from NLayerNN. Weights/biases are explicit attributes
+    (wx, bx, wy, by), and forward/backward/fit are written out independently,
+    in the spirit of the original TwoNN this project started from — but
+    batched (vectorized over all samples) instead of looping sample-by-sample,
+    and with the same activation-applied-before-it's-computed bug fixed.
+
+    Same activation function is used for both layers (pass `activation` and
+    its derivative `dact`); if `dact` is omitted, the derivative is estimated
+    numerically with a finite difference.
+
+    Parameters
+    ----------
+    activation : callable, default identity
+        Activation function applied after both the hidden and output layers.
+    dact : callable or None
+        Derivative of `activation`. If None, estimated numerically.
+    """
+
+    def __init__(self, activation=lambda z: z, dact=None):
+        self.activation = activation
+        self.dact = dact
+        self.wx = None
+        self.bx = None
+        self.wy = None
+        self.by = None
+
+        # caches populated by forward(), used by backward()
+        self.zx = None  # hidden pre-activation,  (n_samples, n_hidden)
+        self.ax = None  # hidden post-activation, (n_samples, n_hidden)
+        self.zy = None  # output pre-activation,  (n_samples, n_output)
+        self.ay = None  # output post-activation, (n_samples, n_output)
+
+    def _dact(self, z):
+        """Analytical derivative if dact was given, else numerical."""
+        if self.dact is not None:
+            return self.dact(z)
+        return (self.activation(z + 1e-4) - self.activation(z)) / 1e-4
+
+    def forward(self, X):
+        """
+        X : (n_samples, n_features)
+        Returns network output, shape (n_samples, n_output).
+
+        zx MUST be computed before ax (ax depends on zx) — the original
+        TwoNN had these reversed, which raised an AttributeError on the
+        very first call. Fixed here.
+        """
+        self.zx = X @ self.wx.T + self.bx        # (n_samples, n_hidden)
+        self.ax = self.activation(self.zx)        # (n_samples, n_hidden)
+        self.zy = self.ax @ self.wy.T + self.by    # (n_samples, n_output)
+        self.ay = self.activation(self.zy)         # (n_samples, n_output)
+        return self.ay
+
+    def backward(self, X, y, y_pred, lr):
+        """
+        One full-batch gradient-descent update, mean-squared-error loss.
+
+        X      : (n_samples, n_features)
+        y      : (n_samples, n_output)
+        y_pred : (n_samples, n_output) — output of forward(X)
+        """
+        n_samples = X.shape[0]
+        err = y_pred - y                                    # (n_samples, n_output)
+
+        # ── output layer ──
+        d_out = self._dact(self.zy)                          # (n_samples, n_output)
+        delta_out = (2.0 / n_samples) * err * d_out           # (n_samples, n_output)
+
+        dwy = delta_out.T @ self.ax                            # (n_output, n_hidden)
+        dby = delta_out.sum(axis=0)                             # (n_output,)
+
+        # ── hidden layer ──
+        d_hid = self._dact(self.zx)                              # (n_samples, n_hidden)
+        delta_hid = (delta_out @ self.wy) * d_hid                  # (n_samples, n_hidden)
+
+        dwx = delta_hid.T @ X                                       # (n_hidden, n_features)
+        dbx = delta_hid.sum(axis=0)                                  # (n_hidden,)
+
+        self.wy -= lr * dwy
+        self.by -= lr * dby
+        self.wx -= lr * dwx
+        self.bx -= lr * dbx
+
+    def fit(self, X, y, n_hidden=None, lr=0.001, epochs=1000, verbose_every=100):
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        if y.ndim == 1:
+            y = y[:, None]
+
+        n_samples, n_features = X.shape
+        n_output = y.shape[1]
+        if n_hidden is None:
+            n_hidden = n_features  # matches the original TwoNN's default
+
+        # small random init (NOT identity — identity would make the
+        # hidden layer redundant at the start of training)
+        self.wx = np.random.randn(n_hidden, n_features) * 0.1
+        self.bx = np.zeros(n_hidden)
+        self.wy = np.random.randn(n_output, n_hidden) * 0.1
+        self.by = np.zeros(n_output)
+
+        losses = []
+        for epoch in range(epochs):
+            y_pred = self.forward(X)
+            loss = float(np.mean((y_pred - y) ** 2))
+            losses.append(loss)
+
+            self.backward(X, y, y_pred, lr)
+
+            if verbose_every and epoch % verbose_every == 0:
+                print(f"Epoch {epoch:5d} | Loss: {loss:.6f}")
+
+        return losses
+
+    def predict(self, X):
+        X = np.asarray(X, dtype=float)
+        return self.forward(X)
+
+
 # ───────────────────────── demo: XOR ─────────────────────────
 if __name__ == "__main__":
     X = np.array([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=float)
@@ -256,11 +383,11 @@ if __name__ == "__main__":
     print("Rounded:    ", np.round(one_layer.predict(X).ravel()))
     print("(expected to NOT match [0 1 1 0] — XOR needs a hidden layer)\n")
 
-    # ── Two-layer ANN (one hidden layer) ─────────────────────────
+    # ── Two-layer ANN, NLayerNN subclass (one hidden layer) ───────
     print("=" * 50)
-    print("TwoLayerNN (input -> hidden -> output)")
+    print("TwoLayerNNSubclass (input -> hidden -> output, via NLayerNN)")
     print("=" * 50)
-    two_layer = TwoLayerNN(
+    two_layer_sub = TwoLayerNNSubclass(
         n_features=2,
         n_hidden=6,
         n_output=1,
@@ -268,9 +395,20 @@ if __name__ == "__main__":
         output_activation="sigmoid",
         seed=42,
     )
-    two_layer.fit(X, y, lr=0.1, epochs=5000, verbose_every=1000)
-    print("\nPredictions:", two_layer.predict(X).ravel())
-    print("Rounded:    ", np.round(two_layer.predict(X).ravel()))
+    two_layer_sub.fit(X, y, lr=0.1, epochs=5000, verbose_every=1000)
+    print("\nPredictions:", two_layer_sub.predict(X).ravel())
+    print("Rounded:    ", np.round(two_layer_sub.predict(X).ravel()))
+    print()
+
+    # ── Two-layer ANN, fully standalone (no inheritance) ──────────
+    print("=" * 50)
+    print("TwoLayerNN (standalone, sigmoid activation)")
+    print("=" * 50)
+    np.random.seed(0)
+    two_layer_standalone = TwoLayerNN(activation=lambda z: 1 / (1 + np.exp(-np.clip(z, -500, 500))))
+    two_layer_standalone.fit(X, y, n_hidden=6, lr=1.0, epochs=8000, verbose_every=1000)
+    print("\nPredictions:", two_layer_standalone.predict(X).ravel())
+    print("Rounded:    ", np.round(two_layer_standalone.predict(X).ravel()))
     print()
 
     # ── N-layer ANN (two hidden layers) ──────────────────────────
